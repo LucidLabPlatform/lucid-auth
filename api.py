@@ -23,9 +23,8 @@ from auth_client import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    client = EMQXClient()
-    maybe_bootstrap_cc(client)
-    app.state.emqx = client
+    app.state.emqx = None
+    app.state.cc_bootstrapped = False
     yield
 
 
@@ -33,7 +32,14 @@ app = FastAPI(title="lucid-auth", lifespan=lifespan)
 
 
 def _emqx(request: Request) -> EMQXClient:
-    return request.app.state.emqx
+    client = getattr(request.app.state, "emqx", None)
+    if client is None:
+        client = EMQXClient()
+        request.app.state.emqx = client
+    if not getattr(request.app.state, "cc_bootstrapped", False):
+        maybe_bootstrap_cc(client)
+        request.app.state.cc_bootstrapped = True
+    return client
 
 
 @app.get("/health")
