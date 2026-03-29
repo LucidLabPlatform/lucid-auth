@@ -57,17 +57,24 @@ class EMQXClient:
             "Content-Type": "application/json",
         }
 
+    def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
+        resp = httpx.request(method, f"{self._base}{path}", headers=self._h(), timeout=30, **kwargs)
+        if resp.status_code == 401:
+            self._token = self._login()
+            resp = httpx.request(method, f"{self._base}{path}", headers=self._h(), timeout=30, **kwargs)
+        return resp
+
     def get(self, path: str) -> httpx.Response:
-        return httpx.get(f"{self._base}{path}", headers=self._h(), timeout=30)
+        return self._request("GET", path)
 
     def post(self, path: str, body: dict) -> httpx.Response:
-        return httpx.post(f"{self._base}{path}", json=body, headers=self._h(), timeout=30)
+        return self._request("POST", path, json=body)
 
     def put(self, path: str, body: dict) -> httpx.Response:
-        return httpx.put(f"{self._base}{path}", json=body, headers=self._h(), timeout=30)
+        return self._request("PUT", path, json=body)
 
     def delete(self, path: str) -> httpx.Response:
-        return httpx.delete(f"{self._base}{path}", headers=self._h(), timeout=30)
+        return self._request("DELETE", path)
 
 
 # ---------------------------------------------------------------------------
