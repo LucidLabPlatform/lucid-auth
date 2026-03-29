@@ -1,31 +1,14 @@
 #!/usr/bin/env python3
-"""LUCID Auth — EMQX credential management CLI.
+"""CLI for provisioning EMQX-native MQTT users and ACLs."""
 
-Manages MQTT credentials directly via the EMQX management API.
-
-Usage:
-    python manage.py add-agent <agent_id>       Provision agent credentials
-    python manage.py revoke-agent <agent_id>    Revoke agent credentials
-    python manage.py list-agents                List all provisioned agents
-
-    python manage.py add-cc                     Provision central-command credentials
-    python manage.py revoke-cc                  Revoke central-command credentials
-
-    python manage.py add-user <username>        Provision LDAP researcher ACL
-    python manage.py revoke-user <username>     Revoke researcher ACL
-    python manage.py list-users                 List all researcher ACL entries
-
-Environment variables:
-    EMQX_URL        EMQX management API base URL  (default: http://localhost:18083)
-    EMQX_USERNAME   EMQX dashboard username        (default: lucid)
-    EMQX_PASSWORD   EMQX dashboard password        (default: REDACTED)
-"""
+from __future__ import annotations
 
 import sys
 
 import click
 
 from auth_client import (
+    BOOTSTRAP_CC_USER,
     EMQXClient,
     list_agents,
     list_users,
@@ -39,7 +22,6 @@ from auth_client import (
 
 
 def _client() -> EMQXClient:
-    """Create and return an authenticated EMQXClient, exiting on failure."""
     try:
         return EMQXClient()
     except Exception as exc:
@@ -47,25 +29,14 @@ def _client() -> EMQXClient:
         sys.exit(1)
 
 
-# ---------------------------------------------------------------------------
-# Agents
-# ---------------------------------------------------------------------------
-
-
 @click.group()
 def cli():
-    """LUCID Auth — EMQX credential management."""
+    """LUCID auth provisioning CLI."""
 
 
 @cli.command("add-agent")
 @click.argument("agent_id")
 def cmd_add_agent(agent_id: str):
-    """Provision MQTT credentials for an agent.
-
-    Creates (or rotates) the built-in-database user and writes a per-user ACL
-    restricting the agent to its own ``lucid/agents/<agent_id>/#`` namespace.
-    Prints the generated password — copy it to the Pi's AGENT_PASSWORD env var.
-    """
     client = _client()
     try:
         password = provision_agent(client, agent_id)
@@ -74,13 +45,14 @@ def cmd_add_agent(agent_id: str):
         sys.exit(1)
     click.echo(f"Agent '{agent_id}' provisioned.")
     click.echo(f"Password: {password}")
-    click.echo("(copy to Pi .env as AGENT_PASSWORD — shown only once)")
+    click.echo(f"MQTT username/clientid: {agent_id}")
+    click.echo("Auth: EMQX built-in database")
+    click.echo(f"ACL: publish own lucid/agents/{agent_id}/... and subscribe own cmd topics")
 
 
 @cli.command("revoke-agent")
 @click.argument("agent_id")
 def cmd_revoke_agent(agent_id: str):
-    """Revoke credentials and ACL for an agent."""
     client = _client()
     try:
         revoke_agent(client, agent_id)
@@ -92,7 +64,6 @@ def cmd_revoke_agent(agent_id: str):
 
 @cli.command("list-agents")
 def cmd_list_agents():
-    """List all provisioned agents in the EMQX built-in database."""
     client = _client()
     try:
         agents = list_agents(client)
@@ -103,83 +74,60 @@ def cmd_list_agents():
         click.echo("(no agents)")
         return
     for agent in agents:
-        user_id = agent.get("user_id") or agent.get("username", "?")
-        click.echo(user_id)
-
-
-# ---------------------------------------------------------------------------
-# Central Command
-# ---------------------------------------------------------------------------
+        click.echo(agent.get("user_id") or agent.get("username", "?"))
 
 
 @cli.command("add-cc")
 def cmd_add_cc():
-    """Provision MQTT credentials for central command (lucid-cc).
-
-    Creates (or rotates) the lucid-cc built-in-database user with full
-    publish+subscribe access to ``lucid/#``.
-    """
     client = _client()
     try:
         password = provision_cc(client)
     except Exception as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
-    click.echo("Central-command user 'lucid-cc' provisioned.")
+    click.echo(f"Central-command user '{BOOTSTRAP_CC_USER}' provisioned.")
     click.echo(f"Password: {password}")
-    click.echo("(copy to .env as MQTT_PASSWORD — shown only once)")
 
 
 @cli.command("revoke-cc")
 def cmd_revoke_cc():
-    """Revoke central-command credentials and ACL."""
     client = _client()
     try:
         revoke_cc(client)
     except Exception as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
-    click.echo("Central-command user 'lucid-cc' revoked.")
-
-
-# ---------------------------------------------------------------------------
-# Researchers (LDAP-backed)
-# ---------------------------------------------------------------------------
+    click.echo(f"Central-command user '{BOOTSTRAP_CC_USER}' revoked.")
 
 
 @cli.command("add-user")
 @click.argument("username")
 def cmd_add_user(username: str):
-    """Provision subscribe-only ACL for an LDAP researcher.
-
-    No password is stored in EMQX — authentication is handled by EMQX calling
-    your LDAP server on each connect.  This command only writes the ACL entry.
-    """
     client = _client()
     try:
-        provision_user(client, username)
+        entry = provision_user(client, username)
     except Exception as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"Researcher '{username}' ACL provisioned (subscribe lucid/#).")
+    click.echo(f"Researcher '{username}' ACL provisioned.")
+    click.echo("Auth: EMQX LDAP authenticator")
+    click.echo(f"ACL namespace: {entry['topic_prefix']}")
 
 
 @cli.command("revoke-user")
 @click.argument("username")
 def cmd_revoke_user(username: str):
-    """Revoke a researcher's ACL entry."""
     client = _client()
     try:
         revoke_user(client, username)
     except Exception as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"Researcher '{username}' ACL revoked.")
+    click.echo(f"Researcher '{username}' revoked.")
 
 
 @cli.command("list-users")
 def cmd_list_users():
-    """List all researcher ACL entries."""
     client = _client()
     try:
         users = list_users(client)
@@ -190,8 +138,7 @@ def cmd_list_users():
         click.echo("(no researchers)")
         return
     for user in users:
-        uname = user.get("username") or user.get("user_id", "?")
-        click.echo(uname)
+        click.echo(user.get("username") or user.get("user_id", "?"))
 
 
 if __name__ == "__main__":
