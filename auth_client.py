@@ -189,15 +189,11 @@ def _delete_password_user(client: EMQXClient, username: str) -> None:
 
 
 def _upsert_acl_rules(client: EMQXClient, username: str, rules: list[dict]) -> None:
+    _delete_acl_rules(client, username)
     resp = client.post(
         f"/api/v5/authorization/sources/{AUTHZ_SOURCE}/rules/users",
         [{"username": username, "rules": rules}],
     )
-    if resp.status_code == 409:
-        resp = client.put(
-            f"/api/v5/authorization/sources/{AUTHZ_SOURCE}/rules/users/{_quote(username)}",
-            {"rules": rules},
-        )
     resp.raise_for_status()
 
 
