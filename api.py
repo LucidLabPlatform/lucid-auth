@@ -51,6 +51,8 @@ def health():
 def create_agent(agent_id: str, request: Request):
     try:
         password = provision_agent(_emqx(request), agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return {"agent_id": agent_id, "password": password}

@@ -30,6 +30,7 @@ AUTHN_SOURCE = "password_based:built_in_database"
 AUTHZ_SOURCE = "built_in_database"
 RESEARCH_TOPIC_ROOT = "lucid/researcher"
 USERNAME_RE = r"^[A-Za-z0-9._-]+$"
+AGENT_ID_RE = r"^[a-z0-9_]+$"
 
 
 class EMQXClient:
@@ -91,6 +92,14 @@ def _validate_principal_name(value: str, kind: str) -> str:
         raise ValueError(f"{kind} must not be empty")
     if not re.fullmatch(USERNAME_RE, value):
         raise ValueError(f"{kind} may only contain letters, numbers, '.', '_' or '-'")
+    return value
+
+
+def _validate_agent_id(value: str) -> str:
+    if not value:
+        raise ValueError("agent_id must not be empty")
+    if not re.fullmatch(AGENT_ID_RE, value):
+        raise ValueError("agent_id may only contain lowercase letters, numbers or '_'")
     return value
 
 
@@ -204,7 +213,7 @@ def _delete_acl_rules(client: EMQXClient, username: str) -> None:
 
 
 def provision_agent(client: EMQXClient, agent_id: str, password: str | None = None) -> str:
-    agent_id = _validate_principal_name(agent_id, "agent_id")
+    agent_id = _validate_agent_id(agent_id)
     password = password or secrets.token_hex(16)
     _upsert_password_user(client, agent_id, password)
     _upsert_acl_rules(client, agent_id, _agent_rules(agent_id))

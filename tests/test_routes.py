@@ -28,9 +28,19 @@ def test_health(client):
 
 def test_create_agent_returns_password(client, monkeypatch):
     monkeypatch.setattr(api, "provision_agent", lambda emqx, agent_id: "generated-secret")
-    resp = client.post("/agents/robot-01")
+    resp = client.post("/agents/robot_01")
     assert resp.status_code == 201
-    assert resp.json() == {"agent_id": "robot-01", "password": "generated-secret"}
+    assert resp.json() == {"agent_id": "robot_01", "password": "generated-secret"}
+
+
+def test_create_agent_returns_400_for_invalid_agent_id(client, monkeypatch):
+    def bad_agent(_emqx, _agent_id):
+        raise ValueError("agent_id may only contain lowercase letters, numbers or '_'")
+
+    monkeypatch.setattr(api, "provision_agent", bad_agent)
+    resp = client.post("/agents/robot-01")
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "agent_id may only contain lowercase letters, numbers or '_'"}
 
 
 def test_get_agents(client, monkeypatch):
