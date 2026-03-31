@@ -45,7 +45,8 @@ def cmd_add_agent(agent_id: str):
         sys.exit(1)
     click.echo(f"Agent '{agent_id}' provisioned.")
     click.echo(f"Password: {password}")
-    click.echo(f"MQTT username/clientid: {agent_id}")
+    click.echo(f"MQTT username: {agent_id}")
+    click.echo(f"Typical MQTT clientid: lucid.agent.{agent_id}")
     click.echo("Auth: EMQX built-in database")
     click.echo(f"ACL: publish own lucid/agents/{agent_id}/... and subscribe own cmd topics")
 
