@@ -109,6 +109,72 @@ def test_list_users_filters_to_researcher_entries(monkeypatch):
     assert users == [{"username": "forfaly", "rules": [{"topic": "lucid/researcher/forfaly/#"}]}]
 
 
+def test_get_mqtt_state_returns_principals_and_acl_rules(monkeypatch):
+    client = MagicMock()
+    client.get.side_effect = [
+        make_response(
+            200,
+            {
+                "data": [
+                    {"user_id": "robot_01"},
+                    {"user_id": "central-command"},
+                ]
+            },
+        ),
+        make_response(
+            200,
+            {
+                "data": [
+                    {
+                        "username": "robot_01",
+                        "rules": [{"topic": "lucid/agents/robot_01/status", "action": "publish", "permission": "allow"}],
+                    },
+                    {
+                        "username": "central-command",
+                        "rules": [{"topic": "lucid/agents/+/cmd/#", "action": "publish", "permission": "allow"}],
+                    },
+                    {
+                        "username": "forfaly",
+                        "rules": [{"topic": "lucid/researcher/forfaly/#", "action": "all", "permission": "allow"}],
+                    },
+                ]
+            },
+        ),
+    ]
+    monkeypatch.setattr(auth_client, "BOOTSTRAP_CC_USER", "central-command")
+
+    snapshot = auth_client.get_mqtt_state(client)
+
+    assert snapshot["principals"] == [
+        {"username": "robot_01", "role": "agent", "has_password_user": True},
+        {"username": "central-command", "role": "central-command", "has_password_user": True},
+        {"username": "forfaly", "role": "researcher", "has_password_user": False},
+    ]
+    assert snapshot["acl_rules"] == [
+        {
+            "username": "central-command",
+            "priority": 0,
+            "topic": "lucid/agents/+/cmd/#",
+            "action": "publish",
+            "permission": "allow",
+        },
+        {
+            "username": "forfaly",
+            "priority": 0,
+            "topic": "lucid/researcher/forfaly/#",
+            "action": "all",
+            "permission": "allow",
+        },
+        {
+            "username": "robot_01",
+            "priority": 0,
+            "topic": "lucid/agents/robot_01/status",
+            "action": "publish",
+            "permission": "allow",
+        },
+    ]
+
+
 def test_provision_user_rejects_bad_username():
     try:
         auth_client.provision_user(MagicMock(), "bad/name")

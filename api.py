@@ -9,6 +9,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from auth_client import (
     BOOTSTRAP_CC_USER,
     EMQXClient,
+    get_mqtt_state,
     list_agents,
     list_users,
     maybe_bootstrap_cc,
@@ -114,5 +115,13 @@ def delete_user(username: str, request: Request):
 def get_users(request: Request):
     try:
         return list_users(_emqx(request))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.get("/mqtt-state")
+def mqtt_state(request: Request):
+    try:
+        return get_mqtt_state(_emqx(request))
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))

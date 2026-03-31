@@ -74,3 +74,14 @@ def test_get_users(client, monkeypatch):
     resp = client.get("/users")
     assert resp.status_code == 200
     assert resp.json() == [{"username": "forfaly"}]
+
+
+def test_get_mqtt_state(client, monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "get_mqtt_state",
+        lambda emqx: {"principals": [{"username": "robot_01"}], "acl_rules": []},
+    )
+    resp = client.get("/mqtt-state")
+    assert resp.status_code == 200
+    assert resp.json() == {"principals": [{"username": "robot_01"}], "acl_rules": []}

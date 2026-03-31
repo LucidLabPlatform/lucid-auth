@@ -279,6 +279,96 @@ def list_users(client: EMQXClient) -> list[dict]:
     return result
 
 
+def _extract_rules_by_username(client: EMQXClient) -> dict[str, list[dict]]:
+    resp = client.get(f"/api/v5/authorization/sources/{AUTHZ_SOURCE}/rules/users")
+    resp.raise_for_status()
+    payload = resp.json()
+    entries = payload.get("data", payload) if isinstance(payload, dict) else payload
+
+    rules_by_username: dict[str, list[dict]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        username = entry.get("username") or entry.get("user_id")
+        if not username:
+            continue
+        rules = entry.get("rules", [])
+        rules_by_username[username] = [rule for rule in rules if isinstance(rule, dict)]
+    return rules_by_username
+
+
+def _infer_role(username: str, rules: list[dict]) -> str:
+    if username == BOOTSTRAP_CC_USER:
+        return "central-command"
+
+    topics = [str(rule.get("topic", "")) for rule in rules]
+    if any(topic.startswith(f"{RESEARCH_TOPIC_ROOT}/") for topic in topics):
+        return "researcher"
+    return "agent"
+
+
+def get_mqtt_state(client: EMQXClient) -> dict:
+    """Return a broker snapshot of password users and ACL rules.
+
+    EMQX's built-in database remains the source of truth. This snapshot is
+    intended to drive a synchronized Postgres mirror for UI/backend use.
+    """
+
+    users_resp = client.get(f"/api/v5/authentication/{AUTHN_SOURCE}/users")
+    users_resp.raise_for_status()
+    users_payload = users_resp.json()
+    authn_users = users_payload.get("data", users_payload) if isinstance(users_payload, dict) else users_payload
+
+    rules_by_username = _extract_rules_by_username(client)
+
+    principals: list[dict] = []
+    seen: set[str] = set()
+    for item in authn_users:
+        if not isinstance(item, dict):
+            continue
+        username = item.get("user_id") or item.get("username")
+        if not username:
+            continue
+        rules = rules_by_username.get(username, [])
+        principals.append(
+            {
+                "username": username,
+                "role": _infer_role(username, rules),
+                "has_password_user": True,
+            }
+        )
+        seen.add(username)
+
+    for username, rules in rules_by_username.items():
+        if username in seen:
+            continue
+        principals.append(
+            {
+                "username": username,
+                "role": _infer_role(username, rules),
+                "has_password_user": False,
+            }
+        )
+
+    acl_rules: list[dict] = []
+    for principal in principals:
+        username = principal["username"]
+        for priority, rule in enumerate(rules_by_username.get(username, [])):
+            acl_rules.append(
+                {
+                    "username": username,
+                    "priority": priority,
+                    "topic": rule.get("topic", ""),
+                    "action": rule.get("action", ""),
+                    "permission": rule.get("permission", ""),
+                }
+            )
+
+    principals.sort(key=lambda item: (item["role"], item["username"]))
+    acl_rules.sort(key=lambda item: (item["username"], item["priority"]))
+    return {"principals": principals, "acl_rules": acl_rules}
+
+
 def maybe_bootstrap_cc(client: EMQXClient) -> None:
     if BOOTSTRAP_CC_USER and BOOTSTRAP_CC_PASSWORD:
         provision_cc(client, username=BOOTSTRAP_CC_USER, password=BOOTSTRAP_CC_PASSWORD)
