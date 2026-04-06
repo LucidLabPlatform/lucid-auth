@@ -76,6 +76,13 @@ def test_get_users(client, monkeypatch):
     assert resp.json() == [{"username": "forfaly"}]
 
 
+def test_create_observer_returns_password(client, monkeypatch):
+    monkeypatch.setattr(api, "provision_observer", lambda emqx, username: "generated-secret")
+    resp = client.post("/observers/dashboard")
+    assert resp.status_code == 201
+    assert resp.json() == {"username": "dashboard", "password": "generated-secret"}
+
+
 def test_get_mqtt_state(client, monkeypatch):
     monkeypatch.setattr(
         api,

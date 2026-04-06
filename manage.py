@@ -14,9 +14,11 @@ from auth_client import (
     list_users,
     provision_agent,
     provision_cc,
+    provision_observer,
     provision_user,
     revoke_agent,
     revoke_cc,
+    revoke_observer,
     revoke_user,
 )
 
@@ -99,6 +101,34 @@ def cmd_revoke_cc():
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
     click.echo(f"Central-command user '{BOOTSTRAP_CC_USER}' revoked.")
+
+
+@cli.command("add-observer")
+@click.argument("username")
+def cmd_add_observer(username: str):
+    client = _client()
+    try:
+        password = provision_observer(client, username)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"Observer '{username}' provisioned.")
+    click.echo(f"Password: {password}")
+    click.echo(f"MQTT username: {username}")
+    click.echo("Auth: EMQX built-in database")
+    click.echo("ACL: subscribe-only to all agent/component data (no publish)")
+
+
+@cli.command("revoke-observer")
+@click.argument("username")
+def cmd_revoke_observer(username: str):
+    client = _client()
+    try:
+        revoke_observer(client, username)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"Observer '{username}' revoked.")
 
 
 @cli.command("add-user")

@@ -172,6 +172,38 @@ def _cc_rules(username: str) -> list[dict]:
     return rules
 
 
+def _observer_rules(username: str) -> list[dict]:
+    """Subscribe-only view of all agent/component data — no publish rights."""
+    agent_ns = "lucid/agents/+"
+    comp_ns = f"{agent_ns}/components/+"
+    rules: list[dict] = []
+
+    for pattern in (
+        f"{agent_ns}/status",
+        f"{agent_ns}/state",
+        f"{agent_ns}/metadata",
+        f"{agent_ns}/cfg",
+        f"{agent_ns}/cfg/logging",
+        f"{agent_ns}/cfg/telemetry",
+        f"{agent_ns}/logs",
+        f"{agent_ns}/telemetry/#",
+        f"{agent_ns}/evt/#",
+        f"{comp_ns}/status",
+        f"{comp_ns}/state",
+        f"{comp_ns}/metadata",
+        f"{comp_ns}/cfg",
+        f"{comp_ns}/cfg/logging",
+        f"{comp_ns}/cfg/telemetry",
+        f"{comp_ns}/logs",
+        f"{comp_ns}/telemetry/#",
+        f"{comp_ns}/evt/#",
+        f"{RESEARCH_TOPIC_ROOT}/#",
+    ):
+        rules.append({"topic": pattern, "action": "subscribe", "permission": "allow"})
+
+    return rules
+
+
 def _researcher_rules(username: str) -> list[dict]:
     topic_root = f"{RESEARCH_TOPIC_ROOT}/{username}"
     return [
@@ -248,6 +280,20 @@ def revoke_cc(client: EMQXClient, username: str | None = None) -> None:
     _delete_acl_rules(client, cc_username)
 
 
+def provision_observer(client: EMQXClient, username: str, password: str | None = None) -> str:
+    username = _validate_principal_name(username, "username")
+    password = password or secrets.token_hex(16)
+    _upsert_password_user(client, username, password)
+    _upsert_acl_rules(client, username, _observer_rules(username))
+    return password
+
+
+def revoke_observer(client: EMQXClient, username: str) -> None:
+    username = _validate_principal_name(username, "username")
+    _delete_password_user(client, username)
+    _delete_acl_rules(client, username)
+
+
 def provision_user(client: EMQXClient, username: str) -> dict:
     username = _validate_principal_name(username, "username")
     _upsert_acl_rules(client, username, _researcher_rules(username))
@@ -302,8 +348,15 @@ def _infer_role(username: str, rules: list[dict]) -> str:
         return "central-command"
 
     topics = [str(rule.get("topic", "")) for rule in rules]
+    actions = {str(rule.get("action", "")) for rule in rules}
+
     if any(topic.startswith(f"{RESEARCH_TOPIC_ROOT}/") for topic in topics):
         return "researcher"
+
+    # Observer: subscribes to global agent topics but never publishes
+    if any(topic.startswith("lucid/agents/+/") for topic in topics) and "publish" not in actions:
+        return "observer"
+
     return "agent"
 
 

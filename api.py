@@ -15,9 +15,11 @@ from auth_client import (
     maybe_bootstrap_cc,
     provision_agent,
     provision_cc,
+    provision_observer,
     provision_user,
     revoke_agent,
     revoke_cc,
+    revoke_observer,
     revoke_user,
 )
 
@@ -89,6 +91,26 @@ def create_cc(request: Request):
 def delete_cc(request: Request):
     try:
         revoke_cc(_emqx(request))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return Response(status_code=204)
+
+
+@app.post("/observers/{username}", status_code=201)
+def create_observer(username: str, request: Request):
+    try:
+        password = provision_observer(_emqx(request), username)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"username": username, "password": password}
+
+
+@app.delete("/observers/{username}", status_code=204)
+def delete_observer(username: str, request: Request):
+    try:
+        revoke_observer(_emqx(request), username)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     return Response(status_code=204)

@@ -1,6 +1,6 @@
 """Rule-generation tests for broker-native ACLs."""
 
-from auth_client import _agent_rules, _cc_rules, _researcher_rules
+from auth_client import _agent_rules, _cc_rules, _observer_rules, _researcher_rules
 
 
 def test_agent_rules_subscribe_only_to_own_cmd():
@@ -24,6 +24,20 @@ def test_cc_rules_cover_global_cmd_and_data_paths():
     assert {"topic": "lucid/agents/+/cmd/#", "action": "publish", "permission": "allow"} in rules
     assert {"topic": "lucid/agents/+/status", "action": "subscribe", "permission": "allow"} in rules
     assert {"topic": "lucid/researcher/#", "action": "subscribe", "permission": "allow"} in rules
+
+
+def test_observer_rules_subscribe_only():
+    rules = _observer_rules("dashboard")
+    actions = {rule["action"] for rule in rules}
+    assert actions == {"subscribe"}, "Observer must only have subscribe rules"
+
+
+def test_observer_rules_cover_same_topics_as_cc():
+    observer = _observer_rules("dashboard")
+    cc = _cc_rules("central-command")
+    cc_sub_topics = {rule["topic"] for rule in cc if rule["action"] == "subscribe"}
+    observer_topics = {rule["topic"] for rule in observer}
+    assert observer_topics == cc_sub_topics
 
 
 def test_researcher_rules_are_scoped_to_namespace():
