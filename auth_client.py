@@ -350,12 +350,13 @@ def _infer_role(username: str, rules: list[dict]) -> str:
     topics = [str(rule.get("topic", "")) for rule in rules]
     actions = {str(rule.get("action", "")) for rule in rules}
 
-    if any(topic.startswith(f"{RESEARCH_TOPIC_ROOT}/") for topic in topics):
-        return "researcher"
-
     # Observer: subscribes to global agent topics but never publishes
+    # Must check before researcher since observers also subscribe to researcher topics
     if any(topic.startswith("lucid/agents/+/") for topic in topics) and "publish" not in actions:
         return "observer"
+
+    if any(topic.startswith(f"{RESEARCH_TOPIC_ROOT}/") for topic in topics):
+        return "researcher"
 
     return "agent"
 
