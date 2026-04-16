@@ -212,13 +212,15 @@ def _researcher_rules(username: str) -> list[dict]:
     ]
 
 
-def _upsert_password_user(client: EMQXClient, username: str, password: str) -> None:
+def _upsert_password_user(
+    client: EMQXClient, username: str, password: str, is_superuser: bool = False
+) -> None:
     path = f"/api/v5/authentication/{AUTHN_SOURCE}/users"
-    resp = client.post(path, {"user_id": username, "password": password, "is_superuser": False})
+    resp = client.post(path, {"user_id": username, "password": password, "is_superuser": is_superuser})
     if resp.status_code == 409:
         resp = client.put(
             f"/api/v5/authentication/{AUTHN_SOURCE}/users/{_quote(username)}",
-            {"password": password},
+            {"password": password, "is_superuser": is_superuser},
         )
     resp.raise_for_status()
 
@@ -263,7 +265,17 @@ def list_agents(client: EMQXClient) -> list[dict]:
     resp.raise_for_status()
     payload = resp.json()
     users = payload.get("data", payload) if isinstance(payload, dict) else payload
-    return [item for item in users if item.get("user_id") != BOOTSTRAP_CC_USER]
+    rules_by_username = _extract_rules_by_username(client)
+    return [
+        item
+        for item in users
+        if isinstance(item, dict)
+        and _infer_role(
+            item.get("user_id") or item.get("username", ""),
+            rules_by_username.get(item.get("user_id") or item.get("username", ""), []),
+        )
+        == "agent"
+    ]
 
 
 def provision_cc(client: EMQXClient, username: str | None = None, password: str | None = None) -> str:
@@ -289,6 +301,21 @@ def provision_observer(client: EMQXClient, username: str, password: str | None =
 
 
 def revoke_observer(client: EMQXClient, username: str) -> None:
+    username = _validate_principal_name(username, "username")
+    _delete_password_user(client, username)
+    _delete_acl_rules(client, username)
+
+
+
+def provision_superuser(client: EMQXClient, username: str, password: str | None = None) -> str:
+    """Provision an MQTT superuser — bypasses all ACL."""
+    username = _validate_principal_name(username, "username")
+    password = password or secrets.token_hex(16)
+    _upsert_password_user(client, username, password, is_superuser=True)
+    return password
+
+
+def revoke_superuser(client: EMQXClient, username: str) -> None:
     username = _validate_principal_name(username, "username")
     _delete_password_user(client, username)
     _delete_acl_rules(client, username)

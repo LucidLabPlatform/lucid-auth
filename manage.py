@@ -14,10 +14,12 @@ from auth_client import (
     list_users,
     provision_agent,
     provision_cc,
+    provision_superuser,
     provision_observer,
     provision_user,
     revoke_agent,
     revoke_cc,
+    revoke_superuser,
     revoke_observer,
     revoke_user,
 )
@@ -129,6 +131,36 @@ def cmd_revoke_observer(username: str):
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
     click.echo(f"Observer '{username}' revoked.")
+
+
+@cli.command("add-superuser")
+@click.argument("username")
+@click.option("--password", default=None, help="Password (auto-generated if omitted)")
+def cmd_add_superuser(username: str, password: str | None):
+    """Provision a superuser MQTT account (bypasses all ACL)."""
+    client = _client()
+    try:
+        password = provision_superuser(client, username, password)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"Superuser '{username}' provisioned.")
+    click.echo(f"Password: {password}")
+    click.echo(f"MQTT username: {username}")
+    click.echo("Auth: EMQX built-in database (is_superuser=true — bypasses all ACL)")
+
+
+@cli.command("revoke-superuser")
+@click.argument("username")
+def cmd_revoke_superuser(username: str):
+    """Revoke a superuser MQTT account."""
+    client = _client()
+    try:
+        revoke_superuser(client, username)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"Superuser '{username}' revoked.")
 
 
 @cli.command("add-user")
