@@ -377,21 +377,27 @@ def _extract_rules_by_username(client: EMQXClient) -> dict[str, list[dict]]:
 
 
 def _infer_role(username: str, rules: list[dict]) -> str:
+    """Classify an EMQX user into the LUCID role taxonomy.
+
+    Valid roles: agent, central-command, other.
+    Superusers are not classified here — caller checks is_superuser first.
+    """
     if username == BOOTSTRAP_CC_USER:
         return "central-command"
 
     topics = [str(rule.get("topic", "")) for rule in rules]
-    actions = {str(rule.get("action", "")) for rule in rules}
 
-    # Observer: subscribes to global agent topics but never publishes
-    # Must check before researcher since observers also subscribe to researcher topics
-    if any(topic.startswith("lucid/agents/+/") for topic in topics) and "publish" not in actions:
-        return "observer"
+    # Agent: ACL rules scoped to its own subtree lucid/agents/<username>/
+    if any(topic.startswith(f"lucid/agents/{username}/") for topic in topics):
+        return "agent"
 
-    if any(topic.startswith(f"{RESEARCH_TOPIC_ROOT}/") for topic in topics):
-        return "researcher"
+    # Central-command: rules covering fleet-wide command publish lucid/agents/+/cmd/
+    if any(topic.startswith("lucid/agents/+/cmd/") for topic in topics):
+        return "central-command"
 
-    return "agent"
+    # Anything else (manual dashboard creates, observers, researchers — all
+    # quarantined as 'other' for human review).
+    return "other"
 
 
 def get_mqtt_state(client: EMQXClient) -> dict:
@@ -417,10 +423,15 @@ def get_mqtt_state(client: EMQXClient) -> dict:
         if not username:
             continue
         rules = rules_by_username.get(username, [])
+        # is_superuser overrides any ACL-pattern inference.
+        if bool(item.get("is_superuser")):
+            role = "superuser"
+        else:
+            role = _infer_role(username, rules)
         principals.append(
             {
                 "username": username,
-                "role": _infer_role(username, rules),
+                "role": role,
                 "has_password_user": True,
             }
         )

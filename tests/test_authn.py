@@ -148,7 +148,7 @@ def test_get_mqtt_state_returns_principals_and_acl_rules(monkeypatch):
     assert snapshot["principals"] == [
         {"username": "robot_01", "role": "agent", "has_password_user": True},
         {"username": "central-command", "role": "central-command", "has_password_user": True},
-        {"username": "forfaly", "role": "researcher", "has_password_user": False},
+        {"username": "forfaly", "role": "other", "has_password_user": False},
     ]
     assert snapshot["acl_rules"] == [
         {
@@ -173,6 +173,43 @@ def test_get_mqtt_state_returns_principals_and_acl_rules(monkeypatch):
             "permission": "allow",
         },
     ]
+
+
+def test_get_mqtt_state_classifies_is_superuser(monkeypatch):
+    client = MagicMock()
+    client.get.side_effect = [
+        make_response(
+            200,
+            {
+                "data": [
+                    {"user_id": "admin_user", "is_superuser": True},
+                    {"user_id": "robot_02", "is_superuser": False},
+                    {"user_id": "manual_dashboard", "is_superuser": False},
+                ]
+            },
+        ),
+        make_response(
+            200,
+            {
+                "data": [
+                    {
+                        "username": "robot_02",
+                        "rules": [{"topic": "lucid/agents/robot_02/status", "action": "publish", "permission": "allow"}],
+                    },
+                ]
+            },
+        ),
+    ]
+    monkeypatch.setattr(auth_client, "BOOTSTRAP_CC_USER", "cc")
+
+    snapshot = auth_client.get_mqtt_state(client)
+
+    roles_by_username = {p["username"]: p["role"] for p in snapshot["principals"]}
+    assert roles_by_username == {
+        "admin_user": "superuser",        # is_superuser overrides ACL inference
+        "robot_02": "agent",              # ACL matches lucid/agents/robot_02/
+        "manual_dashboard": "other",      # no ACL, no is_superuser → quarantined
+    }
 
 
 def test_provision_user_rejects_bad_username():
