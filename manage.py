@@ -17,6 +17,10 @@ from auth_client import (
     provision_superuser,
     provision_observer,
     provision_user,
+    provision_voice_agent,
+    refresh_agent_acl,
+    refresh_cc_acl,
+    refresh_voice_agent_acl,
     revoke_agent,
     revoke_cc,
     revoke_superuser,
@@ -40,19 +44,71 @@ def cli():
 
 @cli.command("add-agent")
 @click.argument("agent_id")
-def cmd_add_agent(agent_id: str):
+@click.option(
+    "--role",
+    type=click.Choice(["agent", "voice"]),
+    default="agent",
+    show_default=True,
+    help="Role to provision under. 'voice' = voice-agent (adds the ai_session/voice_round_trip carve-out).",
+)
+def cmd_add_agent(agent_id: str, role: str):
     client = _client()
     try:
-        password = provision_agent(client, agent_id)
+        if role == "voice":
+            password = provision_voice_agent(client, agent_id)
+        else:
+            password = provision_agent(client, agent_id)
     except Exception as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
-    click.echo(f"Agent '{agent_id}' provisioned.")
+    role_label = "voice-agent" if role == "voice" else "agent"
+    click.echo(f"Agent '{agent_id}' provisioned. role={role_label}")
     click.echo(f"Password: {password}")
     click.echo(f"MQTT username: {agent_id}")
     click.echo(f"Typical MQTT clientid: lucid.agent.{agent_id}")
     click.echo("Auth: EMQX built-in database")
-    click.echo(f"ACL: publish own lucid/agents/{agent_id}/... and subscribe own cmd topics")
+    if role == "voice":
+        click.echo("ACL: standard agent rules + ai_session/voice_round_trip carve-out")
+    else:
+        click.echo(f"ACL: publish own lucid/agents/{agent_id}/... and subscribe own cmd topics")
+
+
+@cli.command("refresh-agent-acl")
+@click.argument("agent_id")
+def cmd_refresh_agent_acl(agent_id: str):
+    """Reapply standard agent ACL rules without rotating the password."""
+    client = _client()
+    try:
+        refresh_agent_acl(client, agent_id)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"Agent '{agent_id}' ACL refreshed (role=agent).")
+
+
+@cli.command("refresh-voice-agent-acl")
+@click.argument("agent_id")
+def cmd_refresh_voice_agent_acl(agent_id: str):
+    """Reapply voice-agent ACL rules without rotating the password."""
+    client = _client()
+    try:
+        refresh_voice_agent_acl(client, agent_id)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"Agent '{agent_id}' ACL refreshed (role=voice-agent).")
+
+
+@cli.command("refresh-cc-acl")
+def cmd_refresh_cc_acl():
+    """Reapply cc ACL rules without rotating the password."""
+    client = _client()
+    try:
+        refresh_cc_acl(client)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"cc user '{BOOTSTRAP_CC_USER}' ACL refreshed.")
 
 
 @cli.command("revoke-agent")

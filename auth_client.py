@@ -136,6 +136,26 @@ def _agent_rules(agent_id: str) -> list[dict]:
     return rules
 
 
+# voice-agent role: standard agent rules + the inverted cmd/evt-result pair
+# for the ai_session/voice_round_trip exchange.  The only role that breaks
+# the otherwise-strict directional schema (CC publishes cmd, agents publish
+# evt) — and only for that single component/action pair.
+_VOICE_CC_SUBSCRIBE_TOPIC = "lucid/agents/+/components/ai_session/cmd/voice_round_trip"
+_VOICE_CC_PUBLISH_TOPIC = "lucid/agents/+/components/ai_session/evt/voice_round_trip/result"
+
+
+def _voice_agent_extra_rules(agent_id: str) -> list[dict]:
+    base = f"lucid/agents/{agent_id}/components/ai_session"
+    return [
+        {"topic": f"{base}/cmd/voice_round_trip", "action": "publish", "permission": "allow"},
+        {"topic": f"{base}/evt/voice_round_trip/result", "action": "subscribe", "permission": "allow"},
+    ]
+
+
+def _voice_agent_rules(agent_id: str) -> list[dict]:
+    return _agent_rules(agent_id) + _voice_agent_extra_rules(agent_id)
+
+
 def _cc_rules(username: str) -> list[dict]:
     agent_ns = "lucid/agents/+"
     comp_ns = f"{agent_ns}/components/+"
@@ -170,8 +190,13 @@ def _cc_rules(username: str) -> list[dict]:
         f"{comp_ns}/telemetry/#",
         f"{comp_ns}/evt/#",
         f"{RESEARCH_TOPIC_ROOT}/#",
+        # voice-agent mirror: cc subscribes to the agent-published voice cmd.
+        _VOICE_CC_SUBSCRIBE_TOPIC,
     ):
         rules.append({"topic": pattern, "action": "subscribe", "permission": "allow"})
+
+    # voice-agent mirror: cc publishes the result back to the agent.
+    rules.append({"topic": _VOICE_CC_PUBLISH_TOPIC, "action": "publish", "permission": "allow"})
 
     return rules
 
@@ -204,6 +229,9 @@ def _observer_rules(username: str) -> list[dict]:
         f"{comp_ns}/telemetry/#",
         f"{comp_ns}/evt/#",
         f"{RESEARCH_TOPIC_ROOT}/#",
+        # voice-agent mirror: parity with cc's subscribe set so the
+        # observer-equals-cc-subscribe invariant holds.
+        _VOICE_CC_SUBSCRIBE_TOPIC,
     ):
         rules.append({"topic": pattern, "action": "subscribe", "permission": "allow"})
 
@@ -237,6 +265,16 @@ def _delete_password_user(client: EMQXClient, username: str) -> None:
         resp.raise_for_status()
 
 
+def _password_user_exists(client: EMQXClient, username: str) -> bool:
+    resp = client.get(f"/api/v5/authentication/{AUTHN_SOURCE}/users/{_quote(username)}")
+    if resp.status_code == 200:
+        return True
+    if resp.status_code == 404:
+        return False
+    resp.raise_for_status()
+    return False  # pragma: no cover — raise_for_status raised above
+
+
 def _upsert_acl_rules(client: EMQXClient, username: str, rules: list[dict]) -> None:
     _delete_acl_rules(client, username)
     resp = client.post(
@@ -260,6 +298,48 @@ def provision_agent(client: EMQXClient, agent_id: str, password: str | None = No
     return password
 
 
+def provision_voice_agent(
+    client: EMQXClient, agent_id: str, password: str | None = None
+) -> str:
+    """Provision an agent under the voice-agent role.
+
+    Refuses to upsert: if a user with this id already exists, callers must
+    revoke-agent first.  This avoids silently changing role semantics for a
+    running device.
+    """
+    agent_id = _validate_agent_id(agent_id)
+    if _password_user_exists(client, agent_id):
+        raise ValueError(
+            f"user '{agent_id}' already exists; revoke-agent first before re-provisioning"
+        )
+    password = password or secrets.token_hex(16)
+    _upsert_password_user(client, agent_id, password)
+    _upsert_acl_rules(client, agent_id, _voice_agent_rules(agent_id))
+    return password
+
+
+def refresh_agent_acl(client: EMQXClient, agent_id: str) -> None:
+    """Reapply standard agent ACL rules without rotating the password."""
+    agent_id = _validate_agent_id(agent_id)
+    _upsert_acl_rules(client, agent_id, _agent_rules(agent_id))
+
+
+def refresh_voice_agent_acl(client: EMQXClient, agent_id: str) -> None:
+    """Reapply voice-agent ACL rules without rotating the password."""
+    agent_id = _validate_agent_id(agent_id)
+    _upsert_acl_rules(client, agent_id, _voice_agent_rules(agent_id))
+
+
+def refresh_cc_acl(client: EMQXClient, username: str | None = None) -> None:
+    """Reapply cc ACL rules without rotating the password.
+
+    Useful when capability mirror rules change — call this to pick them up
+    without disrupting the orchestrator's existing MQTT session.
+    """
+    cc_username = _validate_principal_name(username or BOOTSTRAP_CC_USER, "username")
+    _upsert_acl_rules(client, cc_username, _cc_rules(cc_username))
+
+
 def revoke_agent(client: EMQXClient, agent_id: str) -> None:
     agent_id = _validate_principal_name(agent_id, "agent_id")
     _delete_password_user(client, agent_id)
@@ -280,7 +360,7 @@ def list_agents(client: EMQXClient) -> list[dict]:
             item.get("user_id") or item.get("username", ""),
             rules_by_username.get(item.get("user_id") or item.get("username", ""), []),
         )
-        == "agent"
+        in ("agent", "voice-agent")
     ]
 
 
@@ -379,11 +459,24 @@ def _extract_rules_by_username(client: EMQXClient) -> dict[str, list[dict]]:
 def _infer_role(username: str, rules: list[dict]) -> str:
     """Classify an EMQX user into the LUCID role taxonomy.
 
-    Valid roles: agent, central-command, other.
+    Valid roles: agent, voice-agent, central-command, other.
     Superusers are not classified here — caller checks is_superuser first.
     """
     if username == BOOTSTRAP_CC_USER:
         return "central-command"
+
+    voice_cmd_topic = (
+        f"lucid/agents/{username}/components/ai_session/cmd/voice_round_trip"
+    )
+
+    # Voice-agent: has the inverted-direction publish rule on its own
+    # ai_session cmd/voice_round_trip topic.  Must precede the plain agent
+    # check since voice-agent ACL is a superset of agent ACL.
+    if any(
+        rule.get("topic") == voice_cmd_topic and rule.get("action") == "publish"
+        for rule in rules
+    ):
+        return "voice-agent"
 
     topics = [str(rule.get("topic", "")) for rule in rules]
 

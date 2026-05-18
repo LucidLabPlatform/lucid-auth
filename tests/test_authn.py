@@ -219,3 +219,85 @@ def test_provision_user_rejects_bad_username():
         assert "may only contain" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_provision_voice_agent_writes_password_and_voice_rules():
+    client = MagicMock()
+    # _password_user_exists -> GET returns 404 (no existing user)
+    client.get.return_value = make_response(404)
+    client.post.side_effect = [make_response(201), make_response(201)]
+    client.delete.return_value = make_response(404)
+
+    password = auth_client.provision_voice_agent(client, "esp_box")
+
+    assert len(password) == 32
+    assert client.post.call_args_list[0].args == (
+        "/api/v5/authentication/password_based:built_in_database/users",
+        {"user_id": "esp_box", "password": password, "is_superuser": False},
+    )
+    acl_path, acl_body = client.post.call_args_list[1].args
+    assert acl_path == "/api/v5/authorization/sources/built_in_database/rules/users"
+    assert acl_body == [
+        {"username": "esp_box", "rules": auth_client._voice_agent_rules("esp_box")}
+    ]
+
+
+def test_provision_voice_agent_refuses_when_user_exists():
+    client = MagicMock()
+    client.get.return_value = make_response(200, {"user_id": "esp_box"})
+
+    try:
+        auth_client.provision_voice_agent(client, "esp_box")
+    except ValueError as exc:
+        assert "already exists" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+    # Must not have attempted any writes.
+    client.post.assert_not_called()
+    client.put.assert_not_called()
+
+
+def test_provision_voice_agent_rejects_bad_agent_id():
+    try:
+        auth_client.provision_voice_agent(MagicMock(), "ESP-Box")
+    except ValueError as exc:
+        assert "lowercase letters, numbers or '_'" in str(exc)
+    else:
+        raise AssertionError("expected ValueError")
+
+
+def test_refresh_voice_agent_acl_does_not_touch_password():
+    client = MagicMock()
+    client.post.return_value = make_response(201)
+    client.delete.return_value = make_response(404)
+
+    auth_client.refresh_voice_agent_acl(client, "esp_box")
+
+    # Only ACL endpoint hit; no password create/update.
+    paths = [call.args[0] for call in client.post.call_args_list]
+    assert all("/authorization/" in p for p in paths)
+    assert not any("/authentication/" in p for p in paths)
+    client.put.assert_not_called()
+    acl_body = client.post.call_args.args[1]
+    assert acl_body == [
+        {"username": "esp_box", "rules": auth_client._voice_agent_rules("esp_box")}
+    ]
+
+
+def test_refresh_cc_acl_does_not_touch_password(monkeypatch):
+    client = MagicMock()
+    client.post.return_value = make_response(201)
+    client.delete.return_value = make_response(404)
+    monkeypatch.setattr(auth_client, "BOOTSTRAP_CC_USER", "central-command")
+
+    auth_client.refresh_cc_acl(client)
+
+    paths = [call.args[0] for call in client.post.call_args_list]
+    assert all("/authorization/" in p for p in paths)
+    assert not any("/authentication/" in p for p in paths)
+    client.put.assert_not_called()
+    acl_body = client.post.call_args.args[1]
+    assert acl_body == [
+        {"username": "central-command", "rules": auth_client._cc_rules("central-command")}
+    ]
