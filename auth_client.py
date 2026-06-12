@@ -32,6 +32,8 @@ RESEARCH_TOPIC_ROOT = "lucid/researcher"
 USERNAME_RE = r"^[A-Za-z0-9._-]+$"
 AGENT_ID_RE = r"^[a-z0-9_]+$"
 
+LANGSAM_SERVER_AGENT_ID = "langsam"
+
 
 class EMQXClient:
     """Thin EMQX management API client with bearer-token auth."""
@@ -154,6 +156,19 @@ def _voice_agent_extra_rules(agent_id: str) -> list[dict]:
 
 def _voice_agent_rules(agent_id: str) -> list[dict]:
     return _agent_rules(agent_id) + _voice_agent_extra_rules(agent_id)
+
+
+def _langsam_client_extra_rules(agent_id: str) -> list[dict]:
+    """Extra rules that let agent_id talk to the langsam component on the server agent."""
+    base = f"lucid/agents/{LANGSAM_SERVER_AGENT_ID}/components/langsam"
+    return [
+        {"topic": f"{base}/cmd/segment",        "action": "publish",   "permission": "allow"},
+        {"topic": f"{base}/evt/segment/result", "action": "subscribe", "permission": "allow"},
+    ]
+
+
+def _langsam_client_rules(agent_id: str) -> list[dict]:
+    return _agent_rules(agent_id) + _langsam_client_extra_rules(agent_id)
 
 
 def _cc_rules(username: str) -> list[dict]:
@@ -328,6 +343,21 @@ def refresh_voice_agent_acl(client: EMQXClient, agent_id: str) -> None:
     """Reapply voice-agent ACL rules without rotating the password."""
     agent_id = _validate_agent_id(agent_id)
     _upsert_acl_rules(client, agent_id, _voice_agent_rules(agent_id))
+
+
+def provision_langsam_client(client: EMQXClient, agent_id: str, password: str | None = None) -> str:
+    """Provision an agent that can send segmentation requests to the langsam server."""
+    agent_id = _validate_agent_id(agent_id)
+    password = password or secrets.token_hex(16)
+    _upsert_password_user(client, agent_id, password)
+    _upsert_acl_rules(client, agent_id, _langsam_client_rules(agent_id))
+    return password
+
+
+def refresh_langsam_client_acl(client: EMQXClient, agent_id: str) -> None:
+    """Reapply langsam-client ACL rules without rotating the password."""
+    agent_id = _validate_agent_id(agent_id)
+    _upsert_acl_rules(client, agent_id, _langsam_client_rules(agent_id))
 
 
 def refresh_cc_acl(client: EMQXClient, username: str | None = None) -> None:
