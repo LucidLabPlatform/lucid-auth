@@ -15,6 +15,7 @@ from auth_client import (
     provision_agent,
     provision_cc,
     provision_langsam_client,
+    provision_mt3_client,
     provision_superuser,
     provision_observer,
     provision_user,
@@ -22,6 +23,7 @@ from auth_client import (
     refresh_agent_acl,
     refresh_cc_acl,
     refresh_langsam_client_acl,
+    refresh_mt3_client_acl,
     refresh_voice_agent_acl,
     revoke_agent,
     revoke_cc,
@@ -48,13 +50,14 @@ def cli():
 @click.argument("agent_id")
 @click.option(
     "--role",
-    type=click.Choice(["agent", "voice", "langsam_client"]),
+    type=click.Choice(["agent", "voice", "langsam_client", "mt3_client"]),
     default="agent",
     show_default=True,
     help=(
         "Role to provision under. "
         "'voice' adds the ai_session/voice_round_trip carve-out. "
-        "'langsam_client' adds publish/subscribe rights to the langsam segmentation server."
+        "'langsam_client' adds publish/subscribe rights to the langsam segmentation server. "
+        "'mt3_client' adds publish/subscribe rights to the mt3 inference server."
     ),
 )
 def cmd_add_agent(agent_id: str, role: str):
@@ -64,12 +67,18 @@ def cmd_add_agent(agent_id: str, role: str):
             password = provision_voice_agent(client, agent_id)
         elif role == "langsam_client":
             password = provision_langsam_client(client, agent_id)
+        elif role == "mt3_client":
+            password = provision_mt3_client(client, agent_id)
         else:
             password = provision_agent(client, agent_id)
     except Exception as exc:
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
-    role_label = {"voice": "voice-agent", "langsam_client": "langsam-client"}.get(role, "agent")
+    role_label = {
+        "voice": "voice-agent",
+        "langsam_client": "langsam-client",
+        "mt3_client": "mt3-client",
+    }.get(role, "agent")
     click.echo(f"Agent '{agent_id}' provisioned. role={role_label}")
     click.echo(f"Password: {password}")
     click.echo(f"MQTT username: {agent_id}")
@@ -79,6 +88,8 @@ def cmd_add_agent(agent_id: str, role: str):
         click.echo("ACL: standard agent rules + ai_session/voice_round_trip carve-out")
     elif role == "langsam_client":
         click.echo("ACL: standard agent rules + langsam cmd/segment publish + evt/segment/result subscribe")
+    elif role == "mt3_client":
+        click.echo("ACL: standard agent rules + mt3 cmd/run+upload_demo publish + evt results subscribe")
     else:
         click.echo(f"ACL: publish own lucid/agents/{agent_id}/... and subscribe own cmd topics")
 
@@ -120,6 +131,19 @@ def cmd_refresh_langsam_client_acl(agent_id: str):
         click.echo(f"ERROR: {exc}", err=True)
         sys.exit(1)
     click.echo(f"Agent '{agent_id}' ACL refreshed (role=langsam-client).")
+
+
+@cli.command("refresh-mt3-client-acl")
+@click.argument("agent_id")
+def cmd_refresh_mt3_client_acl(agent_id: str):
+    """Reapply mt3-client ACL rules without rotating the password."""
+    client = _client()
+    try:
+        refresh_mt3_client_acl(client, agent_id)
+    except Exception as exc:
+        click.echo(f"ERROR: {exc}", err=True)
+        sys.exit(1)
+    click.echo(f"Agent '{agent_id}' ACL refreshed (role=mt3-client).")
 
 
 @cli.command("refresh-cc-acl")
